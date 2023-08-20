@@ -1,0 +1,59 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,6 +6,7 @@ use serde::Deserialize;
+ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+ use tokio::net::{TcpListener, TcpStream};
+ use tokio::sync::{mpsc, oneshot};
++use std::time::Duration;
+ 
+ // Use Jemalloc only for musl-64 bits platforms
+ #[cfg(all(target_env = "musl", target_pointer_width = "64"))]
+@@ -85,6 +86,16 @@ impl Device {
+             Ok(connection) => {
+                 info!("modbus connection to {} sucessfull", self.url);
+                 self.stream = Some(connection);
++
++                /* Some modbus devices are quite slow. Wait some time before
++                 * returning to ensure the connection is established and the
++                 * modbus properly recovered from this and is ready to receive
++                 * messages.
++                 */
++                let wait_dur = Duration::from_millis(1000);
++                info!("waiting {} msecs before attempting to send any message", wait_dur.as_millis());
++                std::thread::sleep(wait_dur);
++
+                 Ok(())
+             }
+             Err(error) => {
+@@ -111,19 +122,19 @@ impl Device {
+     }
+ 
+     async fn write_read(&mut self, frame: &Frame) -> Result<Frame> {
+-        if self.is_connected() {
+-            let result = self.raw_write_read(&frame).await;
+-            match result {
+-                Ok(reply) => Ok(reply),
+-                Err(error) => {
+-                    warn!("modbus error: {}. Retrying...", error);
+-                    self.connect().await?;
+-                    self.raw_write_read(&frame).await
+-                }
+-            }
+-        } else {
++        if !self.is_connected() {
++            info!("Not yet connected, going to connect first");
+             self.connect().await?;
+-            self.raw_write_read(&frame).await
++        }
++
++        let result = self.raw_write_read(&frame).await;
++        match result {
++            Ok(reply) => Ok(reply),
++            Err(error) => {
++                warn!("modbus error: {}. Retrying...", error);
++                self.connect().await?;
++                self.raw_write_read(&frame).await
++            }
+         }
+     }
+ 
